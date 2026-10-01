@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-working-brightgreen.svg)
 
-Pure-HTTP async client for **Big Pickle** (`big-pickle`) and the other free models on the official **OpenCode Zen** gateway, plus an OpenAI-compatible server.
+Pure-HTTP async client for **Big Pickle** (`big-pickle`) and the other free models on the official **OpenCode Zen** gateway.
 
 > [!WARNING]
 > Built on a reverse-engineered understanding of OpenCode's free-tier gate. The gate has already changed twice (2026-09-17, 2026-09-23); if OpenCode changes it again, requests will fail with `403 FreeTierError` until the gate constants are re-derived.
@@ -21,7 +21,6 @@ Pure-HTTP async client for **Big Pickle** (`big-pickle`) and the other free mode
 * satisfies the Zen free-tier gate (headers + body conditions, see below)
 * SSE streaming with normalized events (`reasoning`, `content`, `tool_call`, `usage`, `cost`, `done`)
 * buffered non-streaming API (the wire is always streamed; responses are assembled client-side)
-* OpenAI-compatible server: `/v1/chat/completions`, `/v1/models`, `/health`
 * anonymous by default — no API key required for free models
 
 ---
@@ -36,8 +35,6 @@ python3 -m venv .venv
 ---
 
 ## Quick Start
-
-### Client
 
 ```python
 import asyncio
@@ -60,26 +57,6 @@ async def main():
                 print(event.text, end="", flush=True)
 
 asyncio.run(main())
-```
-
-### Server
-
-```bash
-python -m picklepp.server            # http://127.0.0.1:3017
-PICKLE_PORT=8080 python -m picklepp.server
-```
-
-```bash
-curl http://127.0.0.1:3017/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"big-pickle","messages":[{"role":"user","content":"hi"}],"stream":true}'
-```
-
-Compatible with any OpenAI SDK:
-
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:3017/v1", api_key="unused")
 ```
 
 ---
@@ -105,7 +82,7 @@ Other verified facts:
 * same gate works for the other free models (`mimo-v2.6-flash-free`, `mimo-v2.5-free`, `space-bunny-free`, …)
 * paid models need a valid Zen key + balance (`401` without, `Insufficient account funds` without credit)
 * anonymous requests are rate-limited per IP; requests with a key are rate-limited per key
-* SSE response shape: standard OpenAI chunks with `reasoning_content` deltas, `usage` on chunks, `data: [DONE]`, then a stray `{"choices":[],"cost":"0"}` line (the client stops at `[DONE]` for passthrough, captures `cost` when buffering)
+* SSE response shape: standard OpenAI chunks with `reasoning_content` deltas, `usage` on chunks, `data: [DONE]`, then a stray `{"choices":[],"cost":"0"}` line (raw line iteration stops at `[DONE]`, buffered mode captures `cost`)
 
 Error types raised by the client:
 
@@ -137,7 +114,7 @@ PickleClient(
 
 * `client.chat(messages, model=..., tools=..., extra=...)` → OpenAI-style dict (supports `reasoning_content` and `tool_calls`)
 * `client.stream(...)` → async iterator of `StreamEvent`
-* `client.stream_lines(...)` → raw SSE lines (used by the server for passthrough)
+* `client.stream_lines(...)` → raw SSE lines (stops at `[DONE]`)
 * `client.models()` → `GET /models`
 
 `inject_tools=True` guarantees the gate's `bash|shell` + `read` requirement. The model may genuinely emit `tool_calls` for those names — your app decides whether to execute them or return an error result.
@@ -150,7 +127,7 @@ PickleClient(
 .venv/bin/python examples/verify.py
 ```
 
-Covers: model listing, SSE stream (reasoning/content/finish/done), buffered completion, tool-call emission, multi-turn context, and server e2e (health, non-stream, stream).
+Covers: model listing, SSE stream (reasoning/content/finish/done), buffered completion, tool-call emission, and multi-turn context.
 
 ---
 

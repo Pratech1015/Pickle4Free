@@ -5,13 +5,9 @@ import json
 import sys
 from typing import Any, Coroutine, Dict, List
 
-import aiohttp
-from aiohttp import web
-
 sys.path.insert(0, ".")
 
 from picklepp import PickleClient  # noqa: E402
-from picklepp.server import create_app  # noqa: E402
 
 results: List[tuple] = []
 
@@ -105,46 +101,6 @@ async def verify_multi_turn(client: PickleClient) -> None:
         raise AssertionError(f"codeword lost: {text!r}")
 
 
-async def verify_server() -> None:
-    runner = web.AppRunner(create_app())
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-    base = f"http://127.0.0.1:{port}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{base}/health") as resp:
-                if resp.status != 200:
-                    raise AssertionError(f"health status {resp.status}")
-            body = {
-                "model": "big-pickle",
-                "messages": [{"role": "user", "content": "Say OK."}],
-                "max_tokens": 50,
-                "stream": False,
-            }
-            async with session.post(f"{base}/v1/chat/completions", json=body) as resp:
-                if resp.status != 200:
-                    raise AssertionError(f"non-stream status {resp.status}: {await resp.text()}")
-                data = await resp.json()
-                if not data["choices"][0]["message"].get("content"):
-                    raise AssertionError("empty non-stream content")
-            body["stream"] = True
-            async with session.post(f"{base}/v1/chat/completions", json=body) as resp:
-                if resp.status != 200:
-                    raise AssertionError(f"stream status {resp.status}: {await resp.text()}")
-                saw_done = False
-                async for raw in resp.content:
-                    line = raw.decode("utf-8", errors="replace").strip()
-                    if line == "data: [DONE]":
-                        saw_done = True
-                        break
-                if not saw_done:
-                    raise AssertionError("no [DONE] from server")
-    finally:
-        await runner.cleanup()
-
-
 async def main() -> int:
     async with PickleClient() as client:
         await check("GET /models lists big-pickle", verify_models(client))
@@ -152,7 +108,6 @@ async def main() -> int:
         await check("buffered chat.completion", verify_chat(client))
         await check("tool_call emission (best effort)", verify_tool_call(client))
         await check("multi-turn context", verify_multi_turn(client))
-    await check("OpenAI server e2e (health, non-stream, stream)", verify_server())
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")
     for name, _, err in failed:
