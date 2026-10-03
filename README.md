@@ -36,6 +36,14 @@ python3 -m venv .venv
 
 ## Quick Start
 
+### Chat REPL
+
+```bash
+python -m picklepp.client
+```
+
+### Library
+
 ```python
 import asyncio
 from picklepp import PickleClient

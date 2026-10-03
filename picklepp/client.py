@@ -466,3 +466,71 @@ class PickleClient:
         if isinstance(data, list):
             return data
         raise ProtocolError("unexpected models payload")
+
+
+async def main() -> None:
+    """Interactive chat REPL — run with `python -m picklepp.client`."""
+    async with PickleClient() as client:
+        history: List[Dict[str, Any]] = []
+        print("\n" + "=" * 60)
+        print(f"PICKLE CHAT — {client.model}")
+        print(f"session: {client.session_id}")
+        print("Type 'quit' to exit")
+        print("=" * 60)
+        while True:
+            try:
+                user_input = (await asyncio.to_thread(input, "\nYou: ")).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
+            if not user_input:
+                continue
+            if user_input.lower() in ("quit", "exit", "q"):
+                break
+            history.append({"role": "user", "content": user_input})
+            print("Assistant: ", end="", flush=True)
+            reasoning_buf = ""
+            answer_started = False
+            content_parts: List[str] = []
+            tools: Dict[int, Dict[str, str]] = {}
+            try:
+                async for event in client.stream(history):
+                    if event.type == "reasoning":
+                        reasoning_buf += event.text or ""
+                        print(f"\r[thinking] {reasoning_buf}", end="", flush=True)
+                    elif event.type == "content":
+                        if not answer_started:
+                            answer_started = True
+                            print("\r" + " " * 78 + "\r", end="")
+                        content_parts.append(event.text or "")
+                        print(event.text, end="", flush=True)
+                    elif event.type == "tool_call" and event.tool_index is not None:
+                        entry = tools.setdefault(event.tool_index, {"name": "", "args": ""})
+                        if event.tool_name:
+                            entry["name"] = event.tool_name
+                        if event.tool_args:
+                            entry["args"] += event.tool_args
+                print()
+            except KeyboardInterrupt:
+                print("\n\nInterrupted!")
+                history.pop()
+                continue
+            except Exception as exc:
+                print(f"\n[Error] {exc}")
+                history.pop()
+                continue
+            if reasoning_buf and not answer_started:
+                print()
+            content = "".join(content_parts)
+            if tools:
+                summary = ", ".join(
+                    f"{tools[index]['name']}({tools[index]['args']})" for index in sorted(tools)
+                )
+                print(f"[tools requested: {summary} — not executed by REPL]")
+                if not content:
+                    content = f"(requested tools: {summary})"
+            history.append({"role": "assistant", "content": content or "(no reply)"})
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
