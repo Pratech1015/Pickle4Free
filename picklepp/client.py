@@ -243,6 +243,22 @@ class _Assembler:
         }
 
 
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(part, str):
+                parts.append(part)
+        return "\n".join(parts)
+    return "" if content is None else str(content)
+
+
 class PickleClient:
     def __init__(
         self,
@@ -255,6 +271,7 @@ class PickleClient:
         timeout: float = 600.0,
         max_retries: int = 3,
         inject_tools: bool = True,
+        system_prompt: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.user_agent = user_agent
@@ -265,6 +282,7 @@ class PickleClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.inject_tools = inject_tools
+        self.system_prompt = system_prompt
         self._api_key = resolve_api_key(api_key)
         self._session: Optional[aiohttp.ClientSession] = None
         self._anonymous_fallback = False
@@ -298,6 +316,29 @@ class PickleClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
+    @classmethod
+    def _apply_system(
+        cls,
+        messages: Sequence[Dict[str, Any]],
+        system_prompt: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        texts: List[str] = []
+        if system_prompt:
+            texts.append(system_prompt)
+        rest: List[Dict[str, Any]] = []
+        for message in messages:
+            if message.get("role") in ("system", "developer"):
+                text = _content_text(message.get("content"))
+                if text:
+                    texts.append(text)
+            else:
+                rest.append(message)
+        if not texts:
+            return list(rest)
+        if not rest:
+            return list(messages)
+        return [{"role": "system", "content": "\n".join(texts)}, *rest]
+
     def _build_body(
         self,
         messages: Sequence[Dict[str, Any]],
@@ -306,10 +347,12 @@ class PickleClient:
         tools: Optional[Sequence[Dict[str, Any]]],
         extra: Optional[Dict[str, Any]],
         inject_tools: Optional[bool],
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         body: Dict[str, Any] = dict(extra or {})
         body["model"] = model or self.model
-        body["messages"] = list(messages)
+        effective_system = self.system_prompt if system_prompt is None else system_prompt
+        body["messages"] = self._apply_system(messages, effective_system)
         effective_inject = self.inject_tools if inject_tools is None else inject_tools
         resolved = list(tools or [])
         if effective_inject:
@@ -412,8 +455,16 @@ class PickleClient:
         tools: Optional[Sequence[Dict[str, Any]]] = None,
         extra: Optional[Dict[str, Any]] = None,
         inject_tools: Optional[bool] = None,
+        system_prompt: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
-        body = self._build_body(messages, model=model, tools=tools, extra=extra, inject_tools=inject_tools)
+        body = self._build_body(
+            messages,
+            model=model,
+            tools=tools,
+            extra=extra,
+            inject_tools=inject_tools,
+            system_prompt=system_prompt,
+        )
         assembler = _Assembler()
         async for line in self._lines(body, stop_after_done=False):
             for event in assembler.feed(line):
@@ -429,8 +480,16 @@ class PickleClient:
         tools: Optional[Sequence[Dict[str, Any]]] = None,
         extra: Optional[Dict[str, Any]] = None,
         inject_tools: Optional[bool] = None,
+        system_prompt: Optional[str] = None,
     ) -> AsyncIterator[str]:
-        body = self._build_body(messages, model=model, tools=tools, extra=extra, inject_tools=inject_tools)
+        body = self._build_body(
+            messages,
+            model=model,
+            tools=tools,
+            extra=extra,
+            inject_tools=inject_tools,
+            system_prompt=system_prompt,
+        )
         async for line in self._lines(body, stop_after_done=True):
             yield line
 
@@ -442,8 +501,16 @@ class PickleClient:
         tools: Optional[Sequence[Dict[str, Any]]] = None,
         extra: Optional[Dict[str, Any]] = None,
         inject_tools: Optional[bool] = None,
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        body = self._build_body(messages, model=model, tools=tools, extra=extra, inject_tools=inject_tools)
+        body = self._build_body(
+            messages,
+            model=model,
+            tools=tools,
+            extra=extra,
+            inject_tools=inject_tools,
+            system_prompt=system_prompt,
+        )
         assembler = _Assembler()
         async for line in self._lines(body, stop_after_done=False):
             assembler.feed(line)
@@ -477,6 +544,8 @@ async def main() -> None:
         print(f"session: {client.session_id}")
         print("Type 'quit' to exit")
         print("=" * 60)
+        if client.system_prompt:
+            print(f"system: {client.system_prompt}")
         while True:
             try:
                 user_input = (await asyncio.to_thread(input, "\nYou: ")).strip()
@@ -487,6 +556,17 @@ async def main() -> None:
                 continue
             if user_input.lower() in ("quit", "exit", "q"):
                 break
+            if user_input == "/system" or user_input.startswith("/system "):
+                argument = user_input[len("/system") :].strip()
+                if not argument:
+                    print(f"system: {client.system_prompt or '(none)'}")
+                elif argument.lower() in ("clear", "off", "none"):
+                    client.system_prompt = None
+                    print("system prompt cleared")
+                else:
+                    client.system_prompt = argument
+                    print(f"system prompt set ({len(argument)} chars)")
+                continue
             history.append({"role": "user", "content": user_input})
             print("Assistant: ", end="", flush=True)
             reasoning_buf = ""

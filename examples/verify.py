@@ -101,6 +101,25 @@ async def verify_multi_turn(client: PickleClient) -> None:
         raise AssertionError(f"codeword lost: {text!r}")
 
 
+async def verify_system_prompt(client: PickleClient) -> None:
+    completion = await client.chat(
+        [{"role": "user", "content": "ping"}],
+        system_prompt="You are a protocol bot. The only acceptable reply to 'ping' is exactly: PONG-77",
+    )
+    text = completion["choices"][0]["message"].get("content") or ""
+    if "PONG-77" not in text:
+        raise AssertionError(f"kwarg system prompt ignored: {text!r}")
+    completion2 = await client.chat(
+        [
+            {"role": "system", "content": "The only acceptable reply to 'pong' is exactly: ACK-3"},
+            {"role": "user", "content": "pong"},
+        ]
+    )
+    text2 = completion2["choices"][0]["message"].get("content") or ""
+    if "ACK-3" not in text2:
+        raise AssertionError(f"history system message ignored: {text2!r}")
+
+
 async def main() -> int:
     async with PickleClient() as client:
         await check("GET /models lists big-pickle", verify_models(client))
@@ -108,6 +127,7 @@ async def main() -> int:
         await check("buffered chat.completion", verify_chat(client))
         await check("tool_call emission (best effort)", verify_tool_call(client))
         await check("multi-turn context", verify_multi_turn(client))
+        await check("system prompt (kwarg + history merge)", verify_system_prompt(client))
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed")
     for name, _, err in failed:

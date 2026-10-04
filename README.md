@@ -22,6 +22,7 @@ Pure-HTTP async client for **Big Pickle** (`big-pickle`) and the other free mode
 * SSE streaming with normalized events (`reasoning`, `content`, `tool_call`, `usage`, `cost`, `done`)
 * buffered non-streaming API (the wire is always streamed; responses are assembled client-side)
 * anonymous by default — no API key required for free models
+* system prompts — client-level default, per-call `system_prompt=` override, `system`/`developer` roles in history are merged and prepended
 
 ---
 
@@ -42,6 +43,8 @@ python3 -m venv .venv
 python -m picklepp.client
 ```
 
+`/system` shows the active system prompt, `/system <text>` sets it, `/system clear` removes it.
+
 ### Library
 
 ```python
@@ -58,9 +61,10 @@ async def main():
         print(completion.get("usage"), completion.get("cost"))
 
         # streaming (normalized events)
-        async for event in client.stream([
-            {"role": "user", "content": "Explain HTTP in one sentence."},
-        ]):
+        async for event in client.stream(
+            [{"role": "user", "content": "Explain HTTP in one sentence."}],
+            system_prompt="You are a terse network engineer.",   # per-call override
+        ):
             if event.type == "content":
                 print(event.text, end="", flush=True)
 
@@ -117,13 +121,16 @@ PickleClient(
     timeout=600.0,
     max_retries=3,
     inject_tools=True,      # add dummy bash/read tools so the gate passes
+    system_prompt=None,     # default system instruction for every request
 )
 ```
 
-* `client.chat(messages, model=..., tools=..., extra=...)` → OpenAI-style dict (supports `reasoning_content` and `tool_calls`)
+* `client.chat(messages, model=..., tools=..., system_prompt=..., extra=...)` → OpenAI-style dict (supports `reasoning_content` and `tool_calls`)
 * `client.stream(...)` → async iterator of `StreamEvent`
 * `client.stream_lines(...)` → raw SSE lines (stops at `[DONE]`)
 * `client.models()` → `GET /models`
+
+`system_prompt` semantics: per-call `None` (default) uses the client's `system_prompt`; `""` disables the client default for that call. Any `system`/`developer` messages already present in `messages` are merged with it and sent as a single `system` message prepended to the conversation.
 
 `inject_tools=True` guarantees the gate's `bash|shell` + `read` requirement. The model may genuinely emit `tool_calls` for those names — your app decides whether to execute them or return an error result.
 
@@ -135,7 +142,7 @@ PickleClient(
 .venv/bin/python examples/verify.py
 ```
 
-Covers: model listing, SSE stream (reasoning/content/finish/done), buffered completion, tool-call emission, and multi-turn context.
+Covers: model listing, SSE stream (reasoning/content/finish/done), buffered completion, tool-call emission, multi-turn context, and system-prompt adherence (kwarg + history merge).
 
 ---
 
