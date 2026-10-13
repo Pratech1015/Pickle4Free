@@ -8,7 +8,7 @@
 Pure-HTTP async client for **Big Pickle** (`big-pickle`) and the other free models on the official **OpenCode Zen** gateway.
 
 > [!WARNING]
-> Built on a reverse-engineered understanding of OpenCode's free-tier gate. The gate has already changed twice (2026-09-17, 2026-09-23); if OpenCode changes it again, requests will fail with `403 FreeTierError` until the gate constants are re-derived.
+> Built on a reverse-engineered understanding of OpenCode's free-tier gate. The gate has already changed three times (2026-09-17, 2026-09-23, 2026-10-13); if OpenCode changes it again, requests will fail with `403 FreeTierError` until the gate constants are re-derived.
 
 > [!IMPORTANT]
 > Big Pickle is a free stealth model. Per official docs, **prompts and completions may be used to improve the model during the free period**. Don't send anything sensitive.
@@ -77,12 +77,12 @@ asyncio.run(main())
 
 Free models on `https://opencode.ai/zen/v1` are rejected with
 `403 FreeTierError: "OpenCode's free tier can only be used from within OpenCode"`
-unless **all** of the following hold (verified live, 2026-10-01):
+unless **all** of the following hold (verified live, 2026-10-13):
 
 | Condition | Detail |
 |---|---|
 | `User-Agent` | must be `opencode/<version>` with version **≥ 1.18.0** (older → `426 UpgradeRequired`); no upper bound; missing/other → `403` |
-| `x-opencode-session` | must match `^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$` — 12 **lowercase hex** chars, then 14 alphanumeric |
+| `x-opencode-session` | must match `^ses_[0-9a-f]{9}f[c-f][0-9a-f][0-9A-Za-z]{14}$` — since 2026-10-13 the gate no longer accepts arbitrary hex: positions 10–11 must be `f` + `[c-f]` (opencode's descending timestamp encoding with a small request counter; the timestamp value itself is not range-checked). 14 alphanumeric chars follow |
 | `"stream": true` | mandatory on the wire — non-streaming requests are rejected instantly (the client always streams and buffers locally for `stream: false` UX) |
 | `tools` in body | must declare a tool named `bash` **or** `shell` **and** a tool named `read` (names only — schemas are not checked; the client injects dummy definitions automatically) |
 | `Authorization` | optional for free models: absent, `Bearer public`, or a real Zen key all work |

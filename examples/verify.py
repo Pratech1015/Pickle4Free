@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from typing import Any, Coroutine, Dict, List
 
 sys.path.insert(0, ".")
 
 from picklepp import PickleClient  # noqa: E402
+from picklepp.client import SESSION_RE  # noqa: E402
 
 results: List[tuple] = []
 
@@ -22,6 +24,23 @@ async def check(name: str, coro: Coroutine[Any, Any, Any]) -> Any:
         results.append((name, False, f"{type(exc).__name__}: {exc}"))
         print(f"FAIL  {name}: {type(exc).__name__}: {exc}")
         return None
+
+
+def decode_session_ms(sid: str) -> int:
+    recovered = (~int(sid[4:16], 16)) & ((1 << 48) - 1)
+    return ((recovered - 1) >> 12) & ((1 << 36) - 1)
+
+
+async def verify_session_format(client: PickleClient) -> None:
+    sid = client.session_id
+    if not SESSION_RE.match(sid):
+        raise AssertionError(f"session id violates gate pattern: {sid!r}")
+    now_ms = int(time.time() * 1000)
+    period = 1 << 36
+    delta = (decode_session_ms(sid) - now_ms) % period
+    delta = min(delta, period - delta)
+    if delta > 60_000:
+        raise AssertionError(f"session id time component not fresh: {sid!r}")
 
 
 async def verify_models(client: PickleClient) -> None:
@@ -122,6 +141,7 @@ async def verify_system_prompt(client: PickleClient) -> None:
 
 async def main() -> int:
     async with PickleClient() as client:
+        await check("session id gate pattern + fresh time", verify_session_format(client))
         await check("GET /models lists big-pickle", verify_models(client))
         await check("SSE stream with reasoning/content/finish/done", verify_stream(client))
         await check("buffered chat.completion", verify_chat(client))

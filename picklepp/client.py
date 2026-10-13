@@ -6,6 +6,7 @@ import os
 import random
 import re
 import secrets
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Union
@@ -25,7 +26,7 @@ from .errors import (
 DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
 DEFAULT_MODEL = "big-pickle"
 DEFAULT_USER_AGENT = "opencode/1.18.32"
-SESSION_RE = re.compile(r"^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$")
+SESSION_RE = re.compile(r"^ses_[0-9a-f]{9}f[c-f][0-9a-f][0-9A-Za-z]{14}$")
 AUTH_JSON = Path.home() / ".local" / "share" / "opencode" / "auth.json"
 
 _AUTO = object()
@@ -60,7 +61,9 @@ GATE_TOOLS: List[Dict[str, Any]] = [
 
 def generate_session_id() -> str:
     alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    return "ses_" + secrets.token_hex(6) + "".join(secrets.choice(alphabet) for _ in range(14))
+    value = ~(int(time.time() * 1000) * 0x1000 + 1)
+    time_part = "".join(f"{(value >> (40 - 8 * i)) & 0xFF:02x}" for i in range(6))
+    return "ses_" + time_part + "".join(secrets.choice(alphabet) for _ in range(14))
 
 
 def saved_api_key() -> Optional[str]:
@@ -378,7 +381,8 @@ class PickleClient:
             pass
         if status == 403 or etype == "FreeTierError":
             return FreeTierError(
-                f"{message} (gate requires: User-Agent opencode/>=1.18.0, valid x-opencode-session, stream:true, bash/shell+read tools)",
+                f"{message} (gate requires: User-Agent opencode/>=1.18.0, "
+                f"x-opencode-session matching {SESSION_RE.pattern}, stream:true, bash/shell+read tools)",
                 status=status,
                 body=payload,
             )
